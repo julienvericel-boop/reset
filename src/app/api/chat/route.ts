@@ -21,7 +21,7 @@ import {
   allowClassifierPanic,
   allowClassifierSelfHarm,
 } from "@/server/crisis";
-import { classifyLastUser } from "@/server/classifier";
+import { classifyLastUser, type ClassifyResult } from "@/server/classifier";
 import { detectModeFromReply, type ChatMode } from "@/server/mode";
 import { makeSafeAskReply } from "@/server/fallbackSafe";
 import { isDefaultQuick, pickDefaultQuickReply } from "@/server/defaultQuick";
@@ -277,13 +277,13 @@ export async function POST(req: NextRequest) {
     const case2 = nonTrivial;
     const shouldClassify = case1 || case2;
 
-    const defaultClassified = {
-      state: "DEFAULT" as const,
+    const defaultClassified: ClassifyResult = {
+      state: "DEFAULT",
       confidence: 0,
-      zone: null as string | null,
-      cue: null as boolean | null,
+      zone: null,
+      cue: null,
     };
-    let classified = defaultClassified;
+    let classified: ClassifyResult = defaultClassified;
     if (shouldClassify) {
       try {
         classified = await classifyLastUser(lastUserContent);
