@@ -2,6 +2,27 @@
 
 import { useRef, useState, useEffect, useCallback } from "react";
 
+const ANON_ID_KEY = "reset_anon_id";
+
+function getOrCreateAnonId(): string {
+  if (typeof window === "undefined") return "";
+  let id = localStorage.getItem(ANON_ID_KEY);
+  if (!id) {
+    id = crypto.randomUUID();
+    localStorage.setItem(ANON_ID_KEY, id);
+  }
+  return id;
+}
+
+/** Détecte si le dernier message assistant est la question CHECK (calme/début). */
+function isLastMessageCheck(messages: Message[]): boolean {
+  if (messages.length === 0) return false;
+  const last = messages[messages.length - 1];
+  if (last?.role !== "assistant" || !last.content) return false;
+  const c = last.content.toLowerCase();
+  return c.includes("calme") && c.includes("début");
+}
+
 type ChatMode = "ASK" | "REPAIR" | "STABILIZE" | "END_CHOICE" | "ENDED";
 
 type QuestionType =
@@ -43,6 +64,8 @@ export default function ChatPage() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const pauseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sessionIdRef = useRef<string | null>(null);
+  const sessionStartedRef = useRef(false);
 
   const scrollToBottom = useCallback(() => {
     scrollRef.current?.scrollTo({
@@ -74,9 +97,34 @@ export default function ChatPage() {
   }, []);
 
   const sendMessage = useCallback(
-    async (overrideText?: string) => {
+    async (
+      overrideText?: string,
+      options?: { fromTerminer?: boolean; checkResult?: "yes" | "some" | "no" }
+    ) => {
       const text = (overrideText ?? input).trim();
       if (!text || isLoading) return;
+
+      const anonId = getOrCreateAnonId();
+      if (!sessionIdRef.current) sessionIdRef.current = crypto.randomUUID();
+      const sessionId = sessionIdRef.current;
+
+      if (!sessionStartedRef.current) {
+        sessionStartedRef.current = true;
+        fetch("/api/analytics/start", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            anonId,
+            sessionId,
+            userAgent: typeof navigator !== "undefined" ? navigator.userAgent : undefined,
+          }),
+        }).catch(() => {});
+      }
+      fetch("/api/analytics/step", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ anonId, sessionId }),
+      }).catch(() => {});
 
       setInput("");
       setShowEndChoice(false);
@@ -113,11 +161,28 @@ export default function ChatPage() {
           { role: "assistant", content: reply, mode, ...(meta && { meta }) },
         ]);
 
+        if (options?.checkResult) {
+          fetch("/api/analytics/end", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ anonId, sessionId, finalResult: options.checkResult }),
+          }).catch(() => {});
+        }
+
         if (mode === "END_CHOICE" || meta?.endChoice) {
           setShowEndChoice(true);
         }
 
         if (mode === "ENDED" || resetSession) {
+          if (options?.fromTerminer) {
+            fetch("/api/analytics/end", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ anonId, sessionId, finalResult: null }),
+            }).catch(() => {});
+          }
+          sessionIdRef.current = null;
+          sessionStartedRef.current = false;
           setMessages((prev) => {
             const last = prev[prev.length - 1];
             return last?.role === "assistant" ? [last] : [];
@@ -215,6 +280,34 @@ export default function ChatPage() {
             </button>
           </div>
         )}
+        {isLastMessageCheck(messages) && !showEndChoice && (
+          <div className="max-w-2xl mx-auto mb-2 flex gap-2 justify-center flex-wrap">
+            <button
+              type="button"
+              onClick={() => sendMessage("Oui", { checkResult: "yes" })}
+              disabled={isLoading}
+              className="px-4 py-2 rounded-xl border border-[var(--border)] bg-[var(--bg)] text-[var(--text)] text-sm hover:bg-[var(--surface)] disabled:opacity-40"
+            >
+              Oui
+            </button>
+            <button
+              type="button"
+              onClick={() => sendMessage("Un peu", { checkResult: "some" })}
+              disabled={isLoading}
+              className="px-4 py-2 rounded-xl border border-[var(--border)] bg-[var(--bg)] text-[var(--text)] text-sm hover:bg-[var(--surface)] disabled:opacity-40"
+            >
+              Un peu
+            </button>
+            <button
+              type="button"
+              onClick={() => sendMessage("Non", { checkResult: "no" })}
+              disabled={isLoading}
+              className="px-4 py-2 rounded-xl border border-[var(--border)] bg-[var(--bg)] text-[var(--text)] text-sm hover:bg-[var(--surface)] disabled:opacity-40"
+            >
+              Non
+            </button>
+          </div>
+        )}
         {showEndChoice && (
           <div className="max-w-2xl mx-auto mb-2 flex gap-2 justify-center">
             <button
@@ -226,7 +319,7 @@ export default function ChatPage() {
             </button>
             <button
               type="button"
-              onClick={() => sendMessage("termine")}
+              onClick={() => sendMessage("termine", { fromTerminer: true })}
               disabled={isLoading}
               className="px-4 py-2 rounded-xl bg-neutral-800 text-white text-sm disabled:opacity-40 dark:bg-neutral-200 dark:text-neutral-900"
             >

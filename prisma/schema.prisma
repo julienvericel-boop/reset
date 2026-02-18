@@ -1,0 +1,26 @@
+// LOT 4 Analytics — SQLite, pas de texte utilisateur.
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model SessionAnalytics {
+  id           String    @id @default(cuid())
+  anonId       String
+  sessionId    String    @unique
+  startedAt    DateTime
+  endedAt      DateTime?
+  durationSec  Int?
+  exchangeCount Int      @default(0)
+  finalResult  String?   // "yes" | "some" | "no" | null
+  userAgent    String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([anonId, startedAt])
+  @@index([startedAt])
+}
